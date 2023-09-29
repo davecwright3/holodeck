@@ -80,3 +80,45 @@ def get_library(spectra, nfreqs, test_frac=0.0):
     # these input output parameters create that output that is frequency dependent,
     # it should find those frequency deps.
     return (gwb_spectra, theta)
+
+
+def find_nearest_row(theta_grid, theta):
+    """Given a array of shape (N,) or (1,N) , find the nearest (euclidean) row in a grid (M,N).
+
+    Parameters
+    ----------
+    theta_grid : array_like
+        The grid to search over.
+    theta : array_like
+        The array to calculate distance from.
+
+    Returns
+    -------
+    ind_close : int
+        The row index in the grid that is closest to the input array.
+
+    Examples
+    --------
+    import numpy as np
+    >>> x = np.arange(20).reshape(5,4)
+    >>> x
+    array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11],
+           [12, 13, 14, 15],
+           [16, 17, 18, 19]])
+    >>> y = np.array([4,6,6,7])
+    >>> x[find_nearest_parameters(x,y)]
+    array([4, 5, 6, 7])
+
+    """
+    # Take the difference. This should broadcast along the rows
+    diff = theta_grid - theta
+
+    # This takes the sum of squares over columns. It gives a euclidean distance for each row in the grid.
+    distsq = np.einsum("ij,ij->i", diff, diff)
+
+    # Find the index that matches the closest squared distance
+    ind_close = np.argmin(distsq)
+
+    return ind_close
