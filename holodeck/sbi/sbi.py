@@ -108,7 +108,7 @@ def find_nearest_row(theta_grid, theta):
            [12, 13, 14, 15],
            [16, 17, 18, 19]])
     >>> y = np.array([4,6,6,7])
-    >>> x[find_nearest_parameters(x,y)]
+    >>> x[find_nearest_row(x,y)]
     array([4, 5, 6, 7])
 
     """
