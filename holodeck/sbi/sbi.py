@@ -13,8 +13,8 @@ FLOOR_STRAIN_SQUARED = 1e-40
 FLOOR_ERR = 1.0
 
 
-def get_library(spectra, nfreqs, test_frac=0.0, center_measure="median"):
-    """Get the GWB from a number of realizations.
+def get_library(spectra, nfreqs, test_frac=0.0):
+    """Get the GWB and parameters from a number of realizations.
 
     Parameters
     ----------
@@ -31,9 +31,9 @@ def get_library(spectra, nfreqs, test_frac=0.0, center_measure="median"):
 
     Returns
     -------
-    gp_freqs : numpy.array
-        The frequencies corresponding to the GWB data
-    xobs : numpy.array
+    gwb_spectra : numpy.array
+        The filtered GWB data
+    theta : numpy.array
         A numpy array containing the parameters used to generate each GWB in `spectra`
 
     Examples
@@ -67,6 +67,7 @@ def get_library(spectra, nfreqs, test_frac=0.0, center_measure="median"):
 
     # Cut out portion for test set later
     test_ind = int(gwb_spectra.shape[0] * test_frac)
+
     if VERBOSE:
         utils.my_print(
             f"setting aside {test_frac} of samples ({test_ind}) for testing, and choosing {nfreqs} frequencies"
@@ -79,16 +80,6 @@ def get_library(spectra, nfreqs, test_frac=0.0, center_measure="median"):
     low_ind = gwb_spectra < FLOOR_STRAIN_SQUARED
     gwb_spectra[low_ind] = FLOOR_STRAIN_SQUARED
 
-    # Get realizations that are all low. We will later use this
-    # boolean array to set a noise floor
-    # I've done it this way in case only certain frequencies have
-    # all ~0 realizations.
-    low_real = np.all(low_ind, axis=-1)
-
-    # Find std
-    # Where low_real is True, return 1.0
-    # else return the std along the realization dimension
-    err = np.where(low_real, FLOOR_ERR, np.std(np.log10(gwb_spectra), axis=-1))
-
-    # these input output parameters create that output that is frequency dependent, it should find those frequency deps.
+    # these input output parameters create that output that is frequency dependent,
+    # it should find those frequency deps.
     return (gwb_spectra, theta)
