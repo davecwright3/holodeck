@@ -25,9 +25,6 @@ def get_library(spectra, nfreqs, test_frac=0.0):
         library
     test_frac : float, optional
         The fraction of the data to reserve at the beginning as a test set
-    center_measure : str, optional
-        The measure of center for the dataset that the GP will be trained on. Can be
-        either "mean" or "median"
 
     Returns
     -------
