@@ -4,13 +4,17 @@
 This module is intended to provide simulation-based inference tools for holodeck.
 """
 
+import warnings
+
+import kalepy as kale
 import numpy as np
+from ceffyl.bw import bandwidths as bw
 from holodeck import utils
+from KDEpy import FFTKDE
 
 VERBOSE = True
 
-FLOOR_STRAIN_SQUARED = 1e-40
-FLOOR_ERR = 1.0
+FLOOR_STRAIN = 1e-20
 
 
 def get_library(spectra, nfreqs, test_frac=0.0):
@@ -70,17 +74,28 @@ def get_library(spectra, nfreqs, test_frac=0.0):
             f"setting aside {test_frac} of samples ({test_ind}) for testing, and choosing {nfreqs} frequencies"
         )
 
-    gwb_spectra = gwb_spectra[test_ind:, :nfreqs, :] ** 2
+    gwb_spectra = gwb_spectra[test_ind:, :nfreqs, :]
     xobs = xobs[test_ind:, :]
 
     # Find all the zeros and set them to be h_c = 1e-20
-    low_ind = gwb_spectra < FLOOR_STRAIN_SQUARED
-    gwb_spectra[low_ind] = FLOOR_STRAIN_SQUARED
+    low_ind = gwb_spectra < FLOOR_STRAIN
+    gwb_spectra[low_ind] = FLOOR_STRAIN
+    # get the frequency
+    freqs = spectra["fobs"][:nfreqs]
 
     # these input output parameters create that output that is frequency dependent,
     # it should find those frequency deps.
-    return (gwb_spectra, theta)
+    return (freqs, gwb_spectra, theta)
 
+
+def hc_to_log10rho(hc, freqs, Tspan):
+    hcsq = hc**2
+    # turn predicted hcsq to psd/T to log10_rho
+    psd = hcsq/(12*np.pi**2 *
+                 freqs**3 * Tspan)
+    log10_rho = 0.5*np.log10(psd)
+
+    return log10_rho
 
 def find_nearest_row(theta_grid, theta):
     """Given a array of shape (N,) or (1,N) , find the nearest (euclidean) row in a grid (M,N).
@@ -122,3 +137,114 @@ def find_nearest_row(theta_grid, theta):
     ind_close = np.argmin(distsq)
 
     return ind_close
+
+
+def density(data, bw, kernel='epanechnikov', kde_func='FFTKDE',
+            rho_grid=np.linspace(-15.5, 0, 10000),
+            take_log=True, reflect=True, supress_warnings=True,
+            return_kde=False, kde_kwargs={}):
+    """
+    Calculate Kernel Density Estimation (KDE) for an MCMC data chain.
+
+    Parameters
+    ----------
+    data : array-like
+        MCMC chain to calculate bandwidths.
+    bw : float or str
+        Bandwidth of KDE. This can be a number or a string accepted by the
+        chosen KDE function.
+    kernel : str, optional
+        Name of the kernel to be used for the KDE.
+    kde_func : str, optional
+        KDE function to be used, chosen from ['kalepy', 'FFTKDE'].
+    rho_grid : array-like, optional
+        Grid of log10rho values to calculate probability density functions.
+    take_log : bool, optional
+        Return log probability density.
+    reflect : bool, optional
+        Include reflecting boundaries.
+    suppress_warnings : bool, optional
+        Suppress warnings from taking the log of 0.
+    return_kde : bool, optional
+        Return the initialized KDE function if True.
+    kde_kwargs : dict, optional
+        Other keyword arguments for the KDE function.
+
+    Returns
+    -------
+    density : array
+        Array of (log) probability density values.
+    kde : KDE object, optional
+        Initialized KDE function if return_kde is True.
+    """
+    if supress_warnings:  # supress warnings from taking log of zero
+        warnings.filterwarnings('ignore')
+
+    # if rho_grid is smaller than data range, cut off data to avoid error
+    data = data[data > rho_grid.min()]
+    data = data[data < rho_grid.max()]
+
+    # initialise kalepy if chosen and fit data
+    if kde_func == 'kalepy':
+        kde = kale.KDE(data, bandwidth=bw,
+                       kernel=kernel, **kde_kwargs)
+
+        if reflect:
+            lo_bound = rho_grid.min()
+        else:
+            lo_bound = None
+
+        density = kde.density(rho_grid, probability=True,
+                              reflect=[lo_bound, None])[1]
+
+    # initialise KDEpy.FFTKDE if chosen and fit data
+    elif kde_func == 'FFTKDE':
+        if kernel == 'epanechnikov':  # change name for FFTKDE
+            kernel = 'epa'
+
+        kde = FFTKDE(bw=bw, kernel=kernel, **kde_kwargs)
+
+        # reflect lower boundary
+        if reflect:
+            lo_bound = rho_grid.min()
+            data = np.concatenate((data,
+                                   2 * lo_bound - data))
+            data = data[data >= lo_bound]
+        else:
+            data = data
+
+        kde = kde.fit(data)  # fit data
+        density = kde.evaluate(rho_grid)
+
+    if take_log:  # switch to take log pdf
+        density = np.log(density)
+
+    if return_kde:
+        return (density, kde)
+
+    else:
+        return density
+
+
+def make_kdes_for_library(library, nfreqs=30, grid=np.linspace(-15.5,-1,10000), save=False):
+    freqs, gwb, theta = get_library(library, nfreqs)
+
+    # broadcast
+    log10rho = hc_to_log10rho(gwb, freqs[None, :, None], 1 / freqs[0])
+
+    # allocate array
+    log10rho_kdes = np.full((*log10rho.shape[:-1],grid.size),np.nan,np.float64)
+    for i in range(log10rho.shape[0]):
+        for j in range(log10rho.shape[1]):
+            try:
+               log10rho_kdes[i,j,:] = density(log10rho[i,j,:],bw.sj(log10rho[i,j,:]), rho_grid=grid)
+            except ValueError:
+                break
+
+    # filter out the samples that had any nan realizations
+    bads = np.any(np.isnan(log10rho_kdes), axis=(1,2))
+    log10rho_kdes = log10rho_kdes[~bads]
+    theta = theta[~bads]
+    if save:
+        np.savez("holodeck-kdes", theta=theta, log10rho_grid=grid, log10rho_kdes=log10rho_kdes)
+    return theta, log10rho_kdes
