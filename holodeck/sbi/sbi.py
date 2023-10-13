@@ -12,6 +12,15 @@ from ceffyl.bw import bandwidths as bw
 from holodeck import utils
 from KDEpy import FFTKDE
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from sbi import utils as sbutils
+from sbi import analysis
+from sbi import inference
+from sbi.inference import SNPE, simulate_for_sbi, prepare_for_sbi
+
+
 VERBOSE = True
 
 FLOOR_STRAIN = 1e-20
@@ -248,3 +257,57 @@ def make_kdes_for_library(library, nfreqs=30, grid=np.linspace(-15.5,-1,10000), 
     if save:
         np.savez("holodeck-kdes", theta=theta, log10rho_grid=grid, log10rho_kdes=log10rho_kdes)
     return theta, log10rho_kdes
+
+class SummaryNet(nn.Module):
+    """Example from SBI documentation."""
+    def __init__(self):
+        super().__init__()
+        # 2D convolutional layer
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=16)
+        # Maxpool layer that reduces 128x128 image to 32x32
+        self.pool = nn.MaxPool2d(kernel_size=4)
+        # Fully connected layer taking as input the 6 flattened output arrays from the maxpooling layer
+        self.fc = nn.Linear(in_features=6 * 100 * 15, out_features=8)
+
+    def forward(self, x):
+        x = x.view(-1, 1, 30, 10000)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = x.view(-1, 6 * 100 * 15)
+        x = F.relu(self.fc(x))
+        print(x.shape)
+        return x
+
+
+class CIFAR10Model(nn.Module):
+    """CNN architecture known to be successful on the CIFAR-10 dataset."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=(12,12), stride=1, padding=0)
+        self.act1 = nn.ReLU()
+        self.drop1 = nn.Dropout(0.3)
+
+        self.conv2 = nn.Conv2d(16, 8, kernel_size=(12,12), stride=1, padding=0)
+        self.act2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(kernel_size=(16, 16))
+
+        self.flat = nn.Flatten()
+
+        self.fc3 = nn.Linear(in_features=8*6*6, out_features=100)
+        self.act3 = nn.ReLU()
+        self.drop3 = nn.Dropout(0.5)
+
+        self.act4 = nn.ReLU()
+        self.fc4 = nn.Linear(100, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 1, 128, 128)
+        x = self.act1(self.conv1(x))
+        x = self.drop1(x)
+        x = self.act2(self.conv2(x))
+        x = self.pool2(x)
+        x = self.flat(x)
+        x = self.act3(self.fc3(x))
+        x = self.drop3(x)
+        x = self.act4(self.fc4(x))
+        return x
